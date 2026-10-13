@@ -98,3 +98,4 @@ Manual §6: the remote sounds an idle alert and powers itself off if it's "not c
 2. DJI Fly installed or running: does it take the session? (T8)
 3. Does the remote stay awake (no idle alert) while only our app is connected? (T9)
 4. What is 06/05 byte 12 bit 0x10 (seen once in L1)?
+5. If the stick mode is changed in DJI Fly, does the remote re-map its channels (06/19 "RC Control Mode Set" exists)? `RCStickMode` assumes the physical default (Mode 2).

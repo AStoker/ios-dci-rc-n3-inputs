@@ -21,7 +21,7 @@ public struct RCRecordingHeader: Sendable, Equatable, Codable {
 }
 
 /// A recorded session. File format: JSON Lines, a header object then one `RCInputSample` per line.
-/// Human-readable and diffable; about 10 KB/s at 60 samples/s.
+/// Human-readable and diffable; ~265 bytes per sample, about 16 KB/s at 60 samples/s.
 public struct RCRecording: Sendable, Equatable {
     public var header: RCRecordingHeader
     public var samples: [RCInputSample]

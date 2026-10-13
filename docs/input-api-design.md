@@ -1,88 +1,97 @@
-# RCKit input API: design proposal (for review, not implemented)
+# RCKit input API
 
-Based on hardware logs L1 and L2 (see `findings.md`). Test 2 settled the open question: 06/01 polling sustains 100 Hz with ~10 ms latency, and the remote refreshes stick values at ~50-60 Hz.
+**Status: implemented** (2026-10-12), based on hardware logs L1-L2 (`findings.md`). Decisions agreed with Andy:
+1. Samples carry **physical sticks**; `RCStickMode` maps them to flight axes.
+2. Recordings are **JSON Lines**.
+3. Values are **linear −1…1**, with no deadzone or expo; shaping belongs to the simulator.
+4. Diagnostics live in a separate library, **RCKitProbe**; the simulator imports only **RCKit**.
 
-## Goals
-
-- The simulator gets **one timestamped sample type** and never sees DUML, EA or threads.
-- Reading the latest input from a render loop is **non-blocking and thread-agnostic**. The previous attempt crashed when actor-isolated state was touched from SceneKit's render thread.
-- **Record/replay**: a recorded session plays back through the same interface as the live remote.
-- The probe keeps working; diagnostics move to their own library so the simulator doesn't link them.
-
-## Public types
+## Using it from the simulator
 
 ```swift
-/// One reading of every RC-N3 input.
-public struct RCInputSample: Sendable, Equatable, Codable {
-    public var time: Double              // monotonic seconds (arrival of the bytes)
-    public var index: UInt64             // increases by 1 per sample
-    public var leftStick: RCStick        // physical sticks, not mode-mapped
-    public var rightStick: RCStick
-    public var gimbalDial: Double        // -1…1, spring return
-    public var flightMode: RCFlightMode  // .cine / .normal / .sport / .unknown
-    public var buttons: RCButtons        // currently held
-    public var raw: RCRawInput           // 364…1684 axis values + flag bytes, for exact replay
-    public var source: RCSampleSource    // .push (06/05), .poll (06/01), .replay
+import RCKit
+
+let remote = RCN3Remote()          // defaults: com.dji.logiclink, 06/01 polled at 100 Hz
+remote.start()                     // main actor; connects whenever the remote is plugged in
+
+// Render loop, any thread, every frame. A lock-protected copy, no actor hop:
+if let input = remote.latest {
+    let axes = RCStickMode.mode2.axes(input)   // throttle, yaw, pitch, roll in -1…1
+    let gimbal = input.gimbalDial
+    let mode = input.flightMode                 // .cine / .normal / .sport / .unknown
 }
 
-public struct RCStick: Sendable, Equatable, Codable { public var x, y: Double } // -1…1, +x right, +y up
-
-public struct RCButtons: OptionSet, Sendable, Codable {
-    public static let pauseRTH, shutterRecord, photoVideo: RCButtons   // Customizable isn't reported (L2)
+// Button edges, connection changes:
+Task {
+    var previous: RCButtons = []
+    for await sample in remote.samples() {
+        let pressed = sample.buttons.subtracting(previous)
+        previous = sample.buttons
+        if pressed.contains(.pauseRTH) { /* brake */ }
+    }
 }
+Task { for await state in remote.connectionStates() { /* show status */ } }
 
-public enum RCConnectionState: Sendable, Equatable {
-    case waitingForAccessory
-    case connecting(AccessoryInfo)
-    case streaming(AccessoryInfo, sampleRate: Double)
-    case failed(String)
-}
-
-/// Anything that produces samples: the live remote, a replay, a touch-stick fallback later.
-public protocol RCInputSource: AnyObject, Sendable {
-    /// Latest sample. Lock-protected and cheap: safe to call every frame from any thread.
-    var latest: RCInputSample? { get }
-    /// Every sample, for UI, recorders and button-edge detection.
-    func samples() -> AsyncStream<RCInputSample>
-    func connectionStates() -> AsyncStream<RCConnectionState>
-    func start()
-    func stop()
-}
-
-public final class RCN3Remote: RCInputSource { … }      // EA com.dji.logiclink + DUML
-public final class RCReplaySource: RCInputSource { … }  // plays a recording in real time
-public final class RCRecorder { … }                     // writes samples as JSON Lines
-
-/// Mode 1/2/3 mapping from physical sticks to flight axes (RC-N3 manual §4.3).
-public enum RCStickMode { case mode1, mode2, mode3
-    public func axes(_ s: RCInputSample) -> (throttle: Double, yaw: Double, pitch: Double, roll: Double)
-}
+// On returning to the foreground (iOS drops EA sessions for suspended apps):
+remote.refresh()
 ```
 
-## Inside `RCN3Remote`
+Recording and replay use the same interface:
 
-- Watches `EAAccessoryManager` and opens `com.dji.logiclink` (T2). Reconnects on unplug/replug and when the app returns to the foreground.
-- All stream I/O stays on the existing `RunLoopThread` (no actors, no main thread).
-- Outbound: DUML in a `55 CC` envelope, port 22345, sender App (T6). Sends a version ping first to confirm the link.
-- Inbound: `DUMLStreamScanner` (handles the 512-byte padded transfers).
-- **Input sources, merged into one sample stream:**
-  - 06/01 poll at **100 Hz** from a timer on the I/O thread: sticks + gimbal. Every reply whose values changed produces a sample (≈ 50-60 samples/s, matching the remote's own refresh rate, ~10 ms after the request).
-  - 06/05 push (~7/s while polling): flight mode switch and buttons, carried into the next sample. A button edge also produces a sample immediately.
-  - If polling stops getting replies (e.g. another app takes the remote), fall back to 06/05 sticks at ~9 Hz and report it in `RCConnectionState`.
-- Button presses shorter than one push interval (~140 ms) can be missed. That's a hardware limit of the push rate; the API exposes held state, not guaranteed edges.
-- `latest` lives behind a `Mutex`. `samples()` fans out to `AsyncStream` continuations (buffering newest-only for slow consumers).
+```swift
+let recorder = try RCRecorder(url: url, header: RCRecordingHeader(accessory: remote.connectionState.accessory))
+recorder.record(from: remote)      // …later: recorder.stop()
+
+let replay = try RCReplaySource(url: url, loops: true)
+replay.start()                     // replay.latest / replay.samples() behave like the remote
+```
+
+## Types
+
+| Type | What it is |
+|---|---|
+| `RCInputSample` | `time` (monotonic s), `index`, `leftStick`/`rightStick` (`RCStick` x,y −1…1, +x right, +y up), `gimbalDial` −1…1, `flightMode`, `buttons`, `raw` (`RCRawInput`: wire values 364…1684 + the two 06/05 flag bytes), `source` (`.poll` / `.push` / `.replay`) |
+| `RCButtons` | OptionSet: `.pauseRTH`, `.shutterRecord`, `.photoVideo`. The Customizable and Power buttons aren't reported by the remote |
+| `RCFlightMode` | `.cine` (C), `.normal` (N), `.sport` (S), `.unknown` until the first 06/05 push |
+| `RCConnectionState` | `.stopped`, `.waitingForAccessory`, `.connecting(AccessoryInfo?)` (opening, or no data for over 1 s), `.streaming(AccessoryInfo)`, `.failed(String)` (e.g. another app holds the remote; retried every 2 s), `.replaying(String)` |
+| `RCInputSource` | Protocol: `latest`, `connectionState`, `samples()`, `connectionStates()`, `start()`, `stop()` |
+| `RCN3Remote` | The live remote. Also `stats` (sample/poll/push rates, latency, remote version), `refresh()`, and `sendDiagnostic(_:note:frame:)` plus a `diagnostics` callback for tools |
+| `RCStickMode` | `.mode1/.mode2/.mode3` → `Axes(throttle, yaw, pitch, roll)` |
+| `RCRecorder`, `RCRecording`, `RCReplaySource` | JSON Lines capture, load, real-time playback |
+
+## How samples are made (`RCN3InputAssembler`)
+
+- **06/01 reply** (polled every 10 ms): sticks + gimbal. A reply whose values changed becomes a `.poll` sample (~50-60/s, the remote's own refresh rate). Unchanged replies are dropped.
+- **06/05 push** (~7/s while polling): mode switch and buttons, carried into later samples. While polling is fresh, a push only creates a `.push` sample when the mode or buttons changed. If no poll reply arrived for 250 ms, pushes drive the sticks too (~9 samples/s fallback).
+- Button presses shorter than one push interval (~140 ms) can be missed. That's a limit of the remote's push rate.
+
+## Threading
+
+- EA notifications and `EASession` creation: main actor (`start`, `stop`, `refresh`).
+- Stream I/O, the 100 Hz poll timer, the stall watchdog and sample assembly: a private `RunLoopThread`.
+- Shared state: `Mutex`. Samples are published from the I/O thread. `latest` is safe from any thread.
+- `AccessoryConnection` is the only `EASession` I/O implementation. RCKitProbe's diagnostic sessions use it too.
+
+## Recording format
+
+```
+{"format":"rckit-recording","note":"…","startedAt":"2026-10-12T23:46:31Z","version":1,"accessory":{…}}
+{"buttons":0,"flightMode":"N","gimbalDial":0,"index":0,"leftStick":{"x":0,"y":0},"raw":{…},"rightStick":{"x":0,"y":0},"source":"poll","time":175.004}
+…
+```
+
+Keys are sorted; one sample per line; ~265 bytes per sample (about 16 KB/s at 60 samples/s). `RCKit/Tests/RCKitTests/Fixtures/hw-test-2-demo.jsonl` is real hardware motion (converted from log L2 with `tools/log2rec.py`).
 
 ## Package layout
 
 ```
-RCKit        (library)  public API above + DUML codec. What the simulator imports.
-RCKitProbe   (library)  StreamAnalyzer, ByteDiffTracker, ProbeLog, sweep, GameController/network probes.
-RCN3Probe    (app)      the dashboard, built on RCKitProbe + RCKit.
+RCKit        DUML codec, AccessoryConnection, RCN3Remote, samples, stick modes, record/replay
+RCKitProbe   StreamAnalyzer, ByteDiffTracker, ProbeLog, probe sessions/sweep, GameController & network probes,
+             RemoteDiagnosticsTap (RCN3Remote traffic → analyzer + log)
+RCN3Probe    the dashboard app (Input, Overview, Streams, DUML, Log)
 ```
 
-## Decisions for Andy (still open)
+## Open
 
-1. **Physical sticks** in the sample plus an `RCStickMode` helper (recommended), or mode-mapped throttle/yaw/pitch/roll as the primary fields?
-2. **Recording format**: JSON Lines (readable, diffable, ~10 KB/s at 100 Hz; recommended) or compact binary?
-3. **Normalisation**: RCKit reports linear −1…1 with no deadzone/expo, leaving shaping to the simulator (recommended), or should RCKit own deadzone/expo?
-4. Split the diagnostics into `RCKitProbe` now (recommended), or keep one library until the simulator exists?
+- Does changing the stick mode in DJI Fly make the remote re-map its channels (06/19 "RC Control Mode Set" exists)? `RCStickMode` assumes physical channels (default Mode 2).
+- Customizable button: not reported; see `findings.md` open question 1.

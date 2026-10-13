@@ -36,8 +36,10 @@ Notes:
 
 After that the app stays installed and you can open it from the Home Screen like any other app. Everything the probe sees is logged inside the app, so you don't need Xcode attached while testing with the remote.
 
-Tip: Product › Scheme › Edit Scheme › Run › Arguments › add `-initialTab 1` to open on a given tab (0 Overview, 1 Streams, 2 DUML, 3 Log).
+Launch arguments (Product › Scheme › Edit Scheme › Run › Arguments):
+- `-initialTab 2` opens on a given tab (0 Input, 1 Overview, 2 Streams, 3 DUML, 4 Log).
+- `-replay <recording name>` starts replaying a recording from Documents/Recordings at launch (demo without the remote).
 
 ## Tests
 
-`⌘U` in Xcode runs the RCKit unit tests (CRCs and frame codec against published DJI packets). From Terminal: `cd RCKit && swift test`.
+`⌘U` in Xcode runs both test targets: RCKitTests (DUML codec, sample assembly, stick modes, recording) and RCKitProbeTests (analyzer). From Terminal: `cd RCKit && swift test`.

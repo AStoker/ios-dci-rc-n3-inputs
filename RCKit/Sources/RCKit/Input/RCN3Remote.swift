@@ -191,16 +191,17 @@ public final class RCN3Remote: RCInputSource, @unchecked Sendable {
             s.outstanding.removeAll()
             return s.generation
         }
-        setState(.connecting(info))
         let connection = AccessoryConnection.open(accessory: accessory, protocolString: configuration.protocolString, io: io) {
             [weak self] event in self?.handle(event, generation: generation)
         }
         guard let connection else {
+            // Stays .failed (deduplicated) across the 2 s retries until the remote is free.
             setState(.failed("Couldn't open \(configuration.protocolString). Another app (e.g. DJI Fly) may be using the remote."))
             scheduleRetry()
             return
         }
         ioState.withLock { $0.connection = connection }
+        setState(.connecting(info))
         send(DUMLCommands.versionInquiry(sender: DUMLDevice.app, sequence: nextSequence()), note: "version")
         if configuration.pollRate > 0 {
             pollTimer = io.scheduleRepeating(interval: 1 / configuration.pollRate) { [weak self] in self?.pollTick() }
