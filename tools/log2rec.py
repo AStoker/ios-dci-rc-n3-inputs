@@ -14,7 +14,8 @@ def emit(ch, t, source):
     global idx
     a = push[11] if push else 0; b = push[12] if push else 0
     mode = {2: "C", 1: "N", 0: "S"}.get((a & 0x30) >> 4, "?") if push else "?"
-    buttons = (1 if a & 0x08 else 0) | (2 if b & 0x40 else 0) | (4 if b & 0x01 else 0)
+    buttons = ((1 if a & 0x08 else 0) | (2 if b & 0x40 else 0) | (4 if b & 0x01 else 0)
+               | (8 if b & 0x10 else 0) | (16 if b & 0x08 else 0))
     raw = {"leftX": ch[3], "leftY": ch[2], "rightX": ch[0], "rightY": ch[1], "gimbal": ch[4], "flagsA": a, "flagsB": b}
     s = {"time": t, "index": idx, "leftStick": {"x": norm(ch[3]), "y": norm(ch[2])}, "rightStick": {"x": norm(ch[0]), "y": norm(ch[1])},
          "gimbalDial": norm(ch[4]), "flightMode": mode, "buttons": buttons, "raw": raw, "source": source}

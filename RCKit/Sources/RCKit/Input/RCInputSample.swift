@@ -55,8 +55,12 @@ public struct RCStick: Sendable, Equatable, Codable {
     public static let centered = RCStick(x: 0, y: 0)
 }
 
-/// The RC-N3 buttons that the remote reports. Pause/RTH, Shutter/Record and Photo/Video are held
-/// states (hardware test 2). The Power button isn't reported.
+/// The RC-N3 buttons that the remote reports.
+///
+/// Pause/RTH, Shutter/Record and Photo/Video are **held states** (set while pressed). The Fn
+/// (Customizable) button reports **gestures** instead: each tap or double-tap sets its member for
+/// exactly one status push (~0.15 s), then it clears. A long Fn press, and Fn pressed together with
+/// another button, aren't reported. The Power button isn't reported. (Hardware tests 2 and Fn.)
 public struct RCButtons: OptionSet, Sendable, Hashable, Codable {
     public let rawValue: UInt8
 
@@ -68,10 +72,10 @@ public struct RCButtons: OptionSet, Sendable, Hashable, Codable {
     public static let pauseRTH = RCButtons(rawValue: 1 << 0)
     public static let shutterRecord = RCButtons(rawValue: 1 << 1)
     public static let photoVideo = RCButtons(rawValue: 1 << 2)
-    /// The Fn / Customizable button (06/05 byte 12 bit 0x10, the dissector's "custom1").
-    /// HYPOTHESIS: seen once as a one-message pulse on a short press (test 1); 1 s holds showed
-    /// nothing (test 2). It may only report short taps, briefly.
-    public static let customizable = RCButtons(rawValue: 1 << 3)
+    /// Fn single tap: a one-push pulse (06/05 byte 12 bit 0x10, the dissector's "custom1").
+    public static let customizableTap = RCButtons(rawValue: 1 << 3)
+    /// Fn double tap: a one-push pulse (06/05 byte 12 bit 0x08, the dissector's "custom2").
+    public static let customizableDoubleTap = RCButtons(rawValue: 1 << 4)
 }
 
 /// The flight mode switch (RC-N3 manual §4.5). `unknown` until the remote's first status push.

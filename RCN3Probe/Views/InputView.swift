@@ -46,7 +46,7 @@ struct InputView: View {
                 } header: {
                     Text("Controls")
                 } footer: {
-                    Text("Fn (Customizable) seems to report only a short tap, for about one status message (~0.13 s). The counts catch it even when the chip flashes too briefly to see.")
+                    Text("Fn reports gestures, not holds: a tap or double tap lights its chip for one status message (~0.15 s). A long press, or Fn with another button, isn't reported. The counts catch every pulse.")
                 }
 
                 Section {
@@ -180,7 +180,10 @@ private struct ControlsBlock: View {
                     Chip(text: "Pause/RTH", isOn: sample?.buttons.contains(.pauseRTH) == true)
                     Chip(text: "Shutter", isOn: sample?.buttons.contains(.shutterRecord) == true)
                     Chip(text: "Photo/Video", isOn: sample?.buttons.contains(.photoVideo) == true)
-                    Chip(text: "Fn", isOn: sample?.buttons.contains(.customizable) == true)
+                }
+                HStack(spacing: 6) {
+                    Chip(text: "Fn tap", isOn: sample?.buttons.contains(.customizableTap) == true)
+                    Chip(text: "Fn double tap", isOn: sample?.buttons.contains(.customizableDoubleTap) == true)
                 }
             }
             if let raw = sample?.raw {
@@ -199,7 +202,7 @@ private struct PressCounts: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            ForEach(ProbeModel.pressCountNames, id: \.self) { name in
+            ForEach(ProbeModel.buttonNames.map(\.name), id: \.self) { name in
                 HStack(alignment: .firstTextBaseline) {
                     Text(name).font(.caption)
                     Spacer()

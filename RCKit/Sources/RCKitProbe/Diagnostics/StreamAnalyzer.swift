@@ -314,7 +314,7 @@ public struct StreamAnalyzer: Sendable {
                    previous.buttonsA != params.buttonsA || previous.buttonsB != params.buttonsB {
                     log?.log(.duml, "\(name) BUTTONS A \(Self.bits(params.buttonsA)) B \(Self.bits(params.buttonsB)) "
                         + "(mode \(params.flightMode.rawValue)\(params.goHomePressed ? " RTH" : "")\(params.custom1 ? " Fn-tap" : "")"
-                        + "\(params.custom2 ? " Fn-0x08" : "")"
+                        + "\(params.custom2 ? " Fn-double" : "")"
                         + "\(params.shutter ? " shutter" : "")\(params.photoVideo ? " photo/video" : ""))")
                 }
                 latestPush = (params, time)

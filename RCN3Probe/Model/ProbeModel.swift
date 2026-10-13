@@ -47,12 +47,9 @@ final class ProbeModel {
     /// Press counts and last-press times per button, from every sample (so a one-message pulse,
     /// like the Fn button's, is counted even if no frame of the UI shows it).
     static let buttonNames: [(name: String, button: RCButtons)] = [
-        ("Pause/RTH", .pauseRTH), ("Shutter", .shutterRecord), ("Photo/Video", .photoVideo), ("Fn", .customizable),
+        ("Pause/RTH", .pauseRTH), ("Shutter", .shutterRecord), ("Photo/Video", .photoVideo),
+        ("Fn tap", .customizableTap), ("Fn double tap", .customizableDoubleTap),
     ]
-    /// 06/05 byte 12 bit 0x08 (the dissector's "custom2"): pulses on another Fn gesture, double-click
-    /// or long press (unconfirmed). Counted from the raw flags until we know which.
-    static let fnSecondaryName = "Fn bit 0x08 (double-click or long press?)"
-    static var pressCountNames: [String] { buttonNames.map(\.name) + [fnSecondaryName] }
     private(set) var buttonPresses: [String: Int] = [:]
     private(set) var buttonLastPressed: [String: Double] = [:]
     private var buttonWatch: Task<Void, Never>?
@@ -335,14 +332,10 @@ final class ProbeModel {
         let stream = source.samples()
         buttonWatch = Task { [weak self] in
             var held: RCButtons = []
-            var secondaryHeld = false
             for await sample in stream {
                 let pressed = sample.buttons.subtracting(held)
                 held = sample.buttons
                 if !pressed.isEmpty { self?.notePresses(pressed, at: sample.time) }
-                let secondary = sample.raw.flagsB & 0x08 != 0
-                if secondary, !secondaryHeld { self?.notePress(Self.fnSecondaryName, at: sample.time) }
-                secondaryHeld = secondary
             }
         }
     }

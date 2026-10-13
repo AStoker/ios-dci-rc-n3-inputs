@@ -50,7 +50,8 @@ struct RCN3InputAssembler: Sendable {
             if push.goHomePressed { buttons.insert(.pauseRTH) }
             if push.shutter { buttons.insert(.shutterRecord) }
             if push.photoVideo { buttons.insert(.photoVideo) }
-            if push.custom1 { buttons.insert(.customizable) }
+            if push.custom1 { buttons.insert(.customizableTap) }
+            if push.custom2 { buttons.insert(.customizableDoubleTap) }
         }
         let raw = RCRawInput(leftX: channels[3], leftY: channels[2], rightX: channels[0], rightY: channels[1],
                              gimbal: channels[4], flagsA: push?.buttonsA ?? 0, flagsB: push?.buttonsB ?? 0)

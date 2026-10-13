@@ -27,7 +27,7 @@ func pollReply(_ channels: [UInt16], sequence: UInt16 = 1) -> DUMLFrame {
         let sample = try #require(sampleValue)
         #expect(sample.source == .push)
         #expect(sample.leftStick == RCStick(x: -1, y: 1))
-        #expect(!sample.buttons.contains(.customizable))
+        #expect(!sample.buttons.contains(.customizableTap))
         #expect(sample.rightStick == .centered)
         #expect(sample.flightMode == .cine)
         #expect(sample.buttons == [.pauseRTH, .shutterRecord, .photoVideo])
@@ -73,10 +73,22 @@ func pollReply(_ channels: [UInt16], sequence: UInt16 = 1) -> DUMLFrame {
         _ = assembler.ingest(pushFrame(flagsA: 0x20, flagsB: 0x00), at: 299.31)
         let pressValue = assembler.ingest(pushFrame(flagsA: 0x20, flagsB: 0x10), at: 299.43)
         let press = try #require(pressValue)
-        #expect(press.buttons == [.customizable])
+        #expect(press.buttons == [.customizableTap])
         let releaseValue = assembler.ingest(pushFrame(flagsA: 0x20, flagsB: 0x00), at: 299.56)
         let release = try #require(releaseValue)
         #expect(release.buttons.isEmpty)
+    }
+
+    @Test func fnDoubleTapIsItsOwnPulse() throws {
+        // Fn test L4, 10.68 s: byte 12 = 0x08 for one push on a double tap.
+        var assembler = RCN3InputAssembler()
+        _ = assembler.ingest(pushFrame(flagsA: 0x10, flagsB: 0x00), at: 10.53)
+        let doubleValue = assembler.ingest(pushFrame(flagsA: 0x10, flagsB: 0x08), at: 10.68)
+        let double = try #require(doubleValue)
+        #expect(double.buttons == [.customizableDoubleTap])
+        let clearedValue = assembler.ingest(pushFrame(flagsA: 0x10, flagsB: 0x00), at: 10.83)
+        let cleared = try #require(clearedValue)
+        #expect(cleared.buttons.isEmpty)
     }
 
     @Test func pushTakesOverSticksWhenPollingGoesStale() throws {
