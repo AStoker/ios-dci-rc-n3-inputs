@@ -1,4 +1,5 @@
 import RCKit
+import RCKitProbe
 import SwiftUI
 
 /// The "changed bytes" highlighter.

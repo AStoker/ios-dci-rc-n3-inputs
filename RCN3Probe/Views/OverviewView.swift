@@ -1,4 +1,5 @@
 import RCKit
+import RCKitProbe
 import SwiftUI
 
 /// Connection panel: what iOS exposes right now, across every transport we probe.

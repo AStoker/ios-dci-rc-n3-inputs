@@ -96,7 +96,7 @@ public struct RCPushParams: Sendable, Equatable {
     public var goHomePressed: Bool { buttonsA & 0x08 != 0 }
     public var modeSwitch: UInt8 { (buttonsA & 0x30) >> 4 }
     /// RC-N3 mapping, confirmed in hardware test 2.
-    public var flightMode: RCFlightModeSwitch { RCFlightModeSwitch(raw: modeSwitch) }
+    public var flightMode: RCFlightMode { RCFlightMode(raw: modeSwitch) }
     public var footStool: UInt8 { (buttonsA & 0xC0) >> 6 }
     public var custom2: Bool { buttonsB & 0x08 != 0 }
     public var custom1: Bool { buttonsB & 0x10 != 0 }
@@ -105,24 +105,6 @@ public struct RCPushParams: Sendable, Equatable {
     public var record: Bool { buttonsB & 0x80 != 0 }
     /// Not in the dissector. RC-N3 Photo/Video button (confirmed in hardware test 2).
     public var photoVideo: Bool { buttonsB & 0x01 != 0 }
-}
-
-/// The RC-N3 flight mode switch (manual §4.5).
-public enum RCFlightModeSwitch: String, Sendable, Equatable, Codable {
-    case cine = "C"
-    case normal = "N"
-    case sport = "S"
-    case unknown = "?"
-
-    /// From the 2-bit field in 06/05 buttonsA bits 4-5.
-    public init(raw: UInt8) {
-        switch raw {
-        case 2: self = .cine
-        case 1: self = .normal
-        case 0: self = .sport
-        default: self = .unknown
-        }
-    }
 }
 
 /// 06/1E "RC Battery Info Push" (RC→APP, ~0.8 Hz on the RC-N3).

@@ -1,5 +1,6 @@
 import Foundation
 import Synchronization
+import RCKit
 
 /// Thread-safe, timestamped event log with an in-memory tail and an optional file on disk.
 ///

@@ -38,6 +38,32 @@ public final class RunLoopThread: @unchecked Sendable {
         CFRunLoopWakeUp(runLoop)
     }
 
+    /// Runs `block` on this thread and waits for it to finish. Runs inline if already on this thread.
+    public func performAndWait(_ block: @escaping @Sendable () -> Void) {
+        if isCurrent {
+            block()
+            return
+        }
+        let done = DispatchSemaphore(value: 0)
+        perform {
+            block()
+            done.signal()
+        }
+        done.wait()
+    }
+
+    /// Calls `block` on this thread every `interval` seconds until the returned timer is invalidated.
+    public func scheduleRepeating(interval: Double, _ block: @escaping @Sendable () -> Void) -> RunLoopTimer {
+        let token = RunLoopTimer(thread: self)
+        perform {
+            let timer = Timer(timeInterval: interval, repeats: true) { _ in block() }
+            timer.tolerance = 0
+            RunLoop.current.add(timer, forMode: .default)
+            token.attach(timer)
+        }
+        return token
+    }
+
     /// True when called from this thread.
     public var isCurrent: Bool { CFRunLoopGetCurrent() === runLoop }
 
@@ -48,8 +74,34 @@ public final class RunLoopThread: @unchecked Sendable {
     }
 }
 
+/// A repeating timer on a `RunLoopThread`. Invalidate from any thread.
+public final class RunLoopTimer: @unchecked Sendable {
+    // Safety: `timer` is only touched on `thread` (set in the scheduling block, cleared in invalidate).
+    private var timer: Timer?
+    private let thread: RunLoopThread
+
+    init(thread: RunLoopThread) {
+        self.thread = thread
+    }
+
+    func attach(_ timer: Timer) {
+        self.timer = timer
+    }
+
+    public func invalidate() {
+        thread.perform { [self] in
+            timer?.invalidate()
+            timer = nil
+        }
+    }
+}
+
 /// Carries a non-Sendable value to another thread when the design guarantees only one thread
 /// uses it at a time (e.g. handing an `EASession` to the I/O thread, which owns it from then on).
-struct UncheckedSendableBox<Value>: @unchecked Sendable {
-    let value: Value
+package struct UncheckedSendableBox<Value>: @unchecked Sendable {
+    package let value: Value
+
+    package init(value: Value) {
+        self.value = value
+    }
 }

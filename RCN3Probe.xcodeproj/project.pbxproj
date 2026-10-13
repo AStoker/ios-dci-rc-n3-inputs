@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		A10000000000000000000013 /* RCKit in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000012 /* RCKit */; };
+		A10000000000000000000017 /* RCKitProbe in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000016 /* RCKitProbe */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -43,6 +44,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A10000000000000000000013 /* RCKit in Frameworks */,
+				A10000000000000000000017 /* RCKitProbe in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -88,6 +90,7 @@
 			name = RCN3Probe;
 			packageProductDependencies = (
 				A10000000000000000000012 /* RCKit */,
+				A10000000000000000000016 /* RCKitProbe */,
 			);
 			productName = RCN3Probe;
 			productReference = A10000000000000000000004 /* RCN3Probe.app */;
@@ -312,6 +315,10 @@
 		A10000000000000000000012 /* RCKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = RCKit;
+		};
+		A10000000000000000000016 /* RCKitProbe */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = RCKitProbe;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

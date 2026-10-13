@@ -1,6 +1,7 @@
 import Foundation
 #if canImport(Darwin)
 import Darwin
+import RCKit
 #endif
 
 /// One network interface address. Used to spot a USB-Ethernet-style interface appearing when the

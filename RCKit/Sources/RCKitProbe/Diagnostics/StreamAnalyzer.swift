@@ -1,4 +1,5 @@
 import Foundation
+import RCKit
 
 /// Everything the probe learns about one byte stream: totals, rates, recent raw chunks, DUML frame
 /// types with per-type byte diffs, envelope ports and the latest decoded RC payloads.

@@ -1,6 +1,7 @@
 #if os(iOS)
 import ExternalAccessory
 import Foundation
+import RCKit
 
 /// Watches External Accessory connections and owns one `AccessoryStreamSession` per
 /// (accessory, protocol) pair.
@@ -101,8 +102,9 @@ public final class ExternalAccessoryProbe {
         sessions[id]?.close(reason: reason)
     }
 
-    public func closeAll(reason: String) {
-        for session in sessions.values where session.state.isLive { session.close(reason: reason) }
+    /// With `wait`, returns once every session has released its protocol.
+    public func closeAll(reason: String, wait: Bool = false) {
+        for session in sessions.values where session.state.isLive { session.close(reason: reason, wait: wait) }
     }
 
     /// Sessions that are open, in a stable order.

@@ -39,6 +39,16 @@
                ReferencedContainer = "container:RCKit">
             </BuildableReference>
          </TestableReference>
+         <TestableReference
+            skipped = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "RCKitProbeTests"
+               BuildableName = "RCKitProbeTests"
+               BlueprintName = "RCKitProbeTests"
+               ReferencedContainer = "container:RCKit">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
    </TestAction>
    <LaunchAction
