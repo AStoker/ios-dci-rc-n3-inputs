@@ -44,6 +44,15 @@ final class ProbeModel {
     private(set) var replay: RCReplaySource?
     private(set) var replayingURL: URL?
 
+    /// Press counts and last-press times per button, from every sample (so a one-message pulse,
+    /// like the Fn button's, is counted even if no frame of the UI shows it).
+    static let buttonNames: [(name: String, button: RCButtons)] = [
+        ("Pause/RTH", .pauseRTH), ("Shutter", .shutterRecord), ("Photo/Video", .photoVideo), ("Fn", .customizable),
+    ]
+    private(set) var buttonPresses: [String: Int] = [:]
+    private(set) var buttonLastPressed: [String: Double] = [:]
+    private var buttonWatch: Task<Void, Never>?
+
     struct RecordingFile: Identifiable, Hashable {
         let url: URL
         let size: Int
@@ -136,6 +145,7 @@ final class ProbeModel {
         ea.start()
         gc.start()
         refreshRecordings()
+        watchButtons(of: remote)
         applyEngine()
         // `-replay <recording name>` starts a replay at launch (demo mode without the remote).
         if let name = UserDefaults.standard.string(forKey: "replay"),
@@ -299,6 +309,7 @@ final class ProbeModel {
             let replay = try RCReplaySource(url: file.url, loops: true)
             self.replay = replay
             replayingURL = file.url
+            watchButtons(of: replay)
             replay.start()
             log.log(.app, "Replaying \(file.name): \(replay.recording.samples.count) samples, \(String(format: "%.1f", replay.recording.duration)) s, looping")
         } catch {
@@ -311,7 +322,34 @@ final class ProbeModel {
         replay.stop()
         self.replay = nil
         replayingURL = nil
+        watchButtons(of: remote)
         log.log(.app, "Replay stopped")
+    }
+
+    private func watchButtons(of source: any RCInputSource) {
+        buttonWatch?.cancel()
+        let stream = source.samples()
+        buttonWatch = Task { [weak self] in
+            var held: RCButtons = []
+            for await sample in stream {
+                let pressed = sample.buttons.subtracting(held)
+                held = sample.buttons
+                if !pressed.isEmpty { self?.notePresses(pressed, at: sample.time) }
+            }
+        }
+    }
+
+    private func notePresses(_ pressed: RCButtons, at time: Double) {
+        for (name, button) in Self.buttonNames where pressed.contains(button) {
+            buttonPresses[name, default: 0] += 1
+            buttonLastPressed[name] = time
+            log.log(.app, "Button press: \(name) (#\(buttonPresses[name]!))")
+        }
+    }
+
+    func resetButtonCounts() {
+        buttonPresses = [:]
+        buttonLastPressed = [:]
     }
 
     // MARK: Sessions

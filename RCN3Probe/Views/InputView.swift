@@ -35,10 +35,18 @@ struct InputView: View {
                     }
                 }
 
-                Section("Controls") {
+                Section {
                     TimelineView(.animation(minimumInterval: 1 / 60)) { _ in
                         ControlsBlock(sample: model.currentSample())
                     }
+                    TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+                        PressCounts(presses: model.buttonPresses, lastPressed: model.buttonLastPressed)
+                    }
+                    Button("Reset press counts", action: model.resetButtonCounts)
+                } header: {
+                    Text("Controls")
+                } footer: {
+                    Text("Fn (Customizable) seems to report only a short tap, for about one status message (~0.13 s). The counts catch it even when the chip flashes too briefly to see.")
                 }
 
                 Section {
@@ -166,15 +174,52 @@ private struct ControlsBlock: View {
                     Text("waiting for push").font(.caption2).foregroundStyle(.secondary)
                 }
             }
-            HStack {
-                Text("Buttons").font(.caption).frame(width: 84, alignment: .leading)
-                Chip(text: "Pause/RTH", isOn: sample?.buttons.contains(.pauseRTH) == true)
-                Chip(text: "Shutter", isOn: sample?.buttons.contains(.shutterRecord) == true)
-                Chip(text: "Photo/Video", isOn: sample?.buttons.contains(.photoVideo) == true)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Buttons").font(.caption)
+                HStack(spacing: 6) {
+                    Chip(text: "Pause/RTH", isOn: sample?.buttons.contains(.pauseRTH) == true)
+                    Chip(text: "Shutter", isOn: sample?.buttons.contains(.shutterRecord) == true)
+                    Chip(text: "Photo/Video", isOn: sample?.buttons.contains(.photoVideo) == true)
+                    Chip(text: "Fn", isOn: sample?.buttons.contains(.customizable) == true)
+                }
+            }
+            if let raw = sample?.raw {
+                Text(verbatim: "flags A \(bits(raw.flagsA))  B \(bits(raw.flagsB))")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 4)
     }
+}
+
+private struct PressCounts: View {
+    let presses: [String: Int]
+    let lastPressed: [String: Double]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(ProbeModel.buttonNames, id: \.name) { entry in
+                HStack {
+                    Text(entry.name).font(.caption)
+                    Spacer()
+                    Text(verbatim: summary(entry.name))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(presses[entry.name] == nil ? .secondary : .primary)
+                }
+            }
+        }
+    }
+
+    private func summary(_ name: String) -> String {
+        guard let count = presses[name], let last = lastPressed[name] else { return "no presses" }
+        return "\(count) press\(count == 1 ? "" : "es") · last \(Format.age(max(0, ProbeClock.now() - last))) ago"
+    }
+}
+
+private func bits(_ value: UInt8) -> String {
+    let binary = String(value, radix: 2)
+    return String(repeating: "0", count: 8 - binary.count) + binary
 }
 
 private struct AxesBlock: View {
@@ -290,6 +335,8 @@ private struct Chip: View {
     var body: some View {
         Text(text)
             .font(.caption.bold())
+            .lineLimit(1)
+            .fixedSize()
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
             .background(isOn ? Color.accentColor : Color(.tertiarySystemFill), in: Capsule())

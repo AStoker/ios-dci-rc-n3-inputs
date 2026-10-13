@@ -63,7 +63,8 @@ public struct RCChannelReport: Sendable, Equatable {
 /// RC-N3 (hardware tests 1-2, 2026-10-12): pushed unprompted, RC→APP, cmd type 0x00, seq 0000,
 /// ~9 Hz idle (fewer while 06/01 is polled fast), 13-byte payload. All five analog fields span
 /// 364…1684. Bits: buttonsA 0x08 Pause/RTH, 0x30 mode switch (C=2, N=1, S=0); buttonsB 0x40
-/// Shutter/Record, 0x01 Photo/Video. The Customizable button isn't reported. The wheel byte stays 0.
+/// Shutter/Record, 0x01 Photo/Video, probably 0x10 Fn/Customizable as a short-press pulse (seen
+/// once in test 1, not on holds in test 2). The wheel byte stays 0.
 public struct RCPushParams: Sendable, Equatable {
     public var aileron: UInt16
     public var elevator: UInt16

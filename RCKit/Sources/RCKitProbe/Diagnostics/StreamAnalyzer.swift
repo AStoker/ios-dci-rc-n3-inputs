@@ -281,8 +281,11 @@ public struct StreamAnalyzer: Sendable {
 
         decodeKnown(frame, at: time, log: log)
 
-        if frameLinesThisWindow < frameLogLimitPerSecond {
-            frameLinesThisWindow += 1
+        // Only the high-rate 06/01 poll replies are rate-limited; everything else (~30 frames/s,
+        // including the 06/05 button push) is always logged so short button pulses can't be lost.
+        let isPollReply = frame.isResponse && frame.commandSet == 0x06 && frame.commandID == 0x01
+        if !isPollReply || frameLinesThisWindow < frameLogLimitPerSecond {
+            if isPollReply { frameLinesThisWindow += 1 }
             log?.log(.duml, "\(name) ← \(frame.label) seq \(String(format: "%04x", frame.sequence)) "
                 + "len \(raw.count)\(port.map { " [55CC:\($0)]" } ?? "") payload \(Hex.string(frame.payload, limit: 64))")
         } else {
@@ -306,7 +309,15 @@ public struct StreamAnalyzer: Sendable {
                 latestChannels = (report, time)
             }
         case (0x06, 0x05):
-            if let params = RCPushParams(payload: frame.payload) { latestPush = (params, time) }
+            if let params = RCPushParams(payload: frame.payload) {
+                if let previous = latestPush?.params,
+                   previous.buttonsA != params.buttonsA || previous.buttonsB != params.buttonsB {
+                    log?.log(.duml, "\(name) BUTTONS A \(Self.bits(params.buttonsA)) B \(Self.bits(params.buttonsB)) "
+                        + "(mode \(params.flightMode.rawValue)\(params.goHomePressed ? " RTH" : "")\(params.custom1 ? " Fn?" : "")"
+                        + "\(params.shutter ? " shutter" : "")\(params.photoVideo ? " photo/video" : ""))")
+                }
+                latestPush = (params, time)
+            }
         case (0x06, 0x1E):
             if let info = RCBatteryInfo(payload: frame.payload) { latestBattery = (info, time) }
         case (0x00, 0x01) where frame.isResponse:
@@ -345,6 +356,11 @@ public struct StreamAnalyzer: Sendable {
         suppressedChunkLines = 0
         suppressedFrameLines = 0
         suppressedOutLines = 0
+    }
+
+    static func bits(_ value: UInt8) -> String {
+        let binary = String(value, radix: 2)
+        return String(repeating: "0", count: 8 - binary.count) + binary
     }
 
     // MARK: Queries

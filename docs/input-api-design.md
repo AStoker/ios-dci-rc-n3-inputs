@@ -51,7 +51,7 @@ replay.start()                     // replay.latest / replay.samples() behave li
 | Type | What it is |
 |---|---|
 | `RCInputSample` | `time` (monotonic s), `index`, `leftStick`/`rightStick` (`RCStick` x,y −1…1, +x right, +y up), `gimbalDial` −1…1, `flightMode`, `buttons`, `raw` (`RCRawInput`: wire values 364…1684 + the two 06/05 flag bytes), `source` (`.poll` / `.push` / `.replay`) |
-| `RCButtons` | OptionSet: `.pauseRTH`, `.shutterRecord`, `.photoVideo`. The Customizable and Power buttons aren't reported by the remote |
+| `RCButtons` | OptionSet: `.pauseRTH`, `.shutterRecord`, `.photoVideo` (held states) and `.customizable` (Fn: probably a brief pulse on a short tap only; HYPOTHESIS). Power isn't reported |
 | `RCFlightMode` | `.cine` (C), `.normal` (N), `.sport` (S), `.unknown` until the first 06/05 push |
 | `RCConnectionState` | `.stopped`, `.waitingForAccessory`, `.connecting(AccessoryInfo?)` (opening, or no data for over 1 s), `.streaming(AccessoryInfo)`, `.failed(String)` (e.g. another app holds the remote; retried every 2 s), `.replaying(String)` |
 | `RCInputSource` | Protocol: `latest`, `connectionState`, `samples()`, `connectionStates()`, `start()`, `stop()` |
@@ -94,4 +94,4 @@ RCN3Probe    the dashboard app (Input, Overview, Streams, DUML, Log)
 ## Open
 
 - Does changing the stick mode in DJI Fly make the remote re-map its channels (06/19 "RC Control Mode Set" exists)? `RCStickMode` assumes physical channels (default Mode 2).
-- Customizable button: not reported; see `findings.md` open question 1.
+- Fn button: short-tap pulse unconfirmed (`hardware-test-fn.md`). Because it's a ~0.13 s pulse, poll `latest` and you may miss it; watch `samples()` for the edge.

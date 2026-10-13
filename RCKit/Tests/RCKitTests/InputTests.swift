@@ -27,6 +27,7 @@ func pollReply(_ channels: [UInt16], sequence: UInt16 = 1) -> DUMLFrame {
         let sample = try #require(sampleValue)
         #expect(sample.source == .push)
         #expect(sample.leftStick == RCStick(x: -1, y: 1))
+        #expect(!sample.buttons.contains(.customizable))
         #expect(sample.rightStick == .centered)
         #expect(sample.flightMode == .cine)
         #expect(sample.buttons == [.pauseRTH, .shutterRecord, .photoVideo])
@@ -64,6 +65,18 @@ func pollReply(_ channels: [UInt16], sequence: UInt16 = 1) -> DUMLFrame {
         let polledValue = assembler.ingest(pollReply([1200, 1024, 1024, 1024, 1024]), at: 1.21)
         let polled = try #require(polledValue)
         #expect(polled.buttons == [.photoVideo] && polled.flightMode == .normal)
+    }
+
+    @Test func fnPulseIsReportedAsCustomizable() throws {
+        // Test 1, 299.43 s: byte 12 = 0x10 for one push while the mode switch was at C (0x20).
+        var assembler = RCN3InputAssembler()
+        _ = assembler.ingest(pushFrame(flagsA: 0x20, flagsB: 0x00), at: 299.31)
+        let pressValue = assembler.ingest(pushFrame(flagsA: 0x20, flagsB: 0x10), at: 299.43)
+        let press = try #require(pressValue)
+        #expect(press.buttons == [.customizable])
+        let releaseValue = assembler.ingest(pushFrame(flagsA: 0x20, flagsB: 0x00), at: 299.56)
+        let release = try #require(releaseValue)
+        #expect(release.buttons.isEmpty)
     }
 
     @Test func pushTakesOverSticksWhenPollingGoesStale() throws {

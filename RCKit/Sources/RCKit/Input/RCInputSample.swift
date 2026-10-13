@@ -55,8 +55,8 @@ public struct RCStick: Sendable, Equatable, Codable {
     public static let centered = RCStick(x: 0, y: 0)
 }
 
-/// The RC-N3 buttons that the remote reports (hardware test 2). The Customizable and Power
-/// buttons aren't reported, so they aren't here.
+/// The RC-N3 buttons that the remote reports. Pause/RTH, Shutter/Record and Photo/Video are held
+/// states (hardware test 2). The Power button isn't reported.
 public struct RCButtons: OptionSet, Sendable, Hashable, Codable {
     public let rawValue: UInt8
 
@@ -68,6 +68,10 @@ public struct RCButtons: OptionSet, Sendable, Hashable, Codable {
     public static let pauseRTH = RCButtons(rawValue: 1 << 0)
     public static let shutterRecord = RCButtons(rawValue: 1 << 1)
     public static let photoVideo = RCButtons(rawValue: 1 << 2)
+    /// The Fn / Customizable button (06/05 byte 12 bit 0x10, the dissector's "custom1").
+    /// HYPOTHESIS: seen once as a one-message pulse on a short press (test 1); 1 s holds showed
+    /// nothing (test 2). It may only report short taps, briefly.
+    public static let customizable = RCButtons(rawValue: 1 << 3)
 }
 
 /// The flight mode switch (RC-N3 manual §4.5). `unknown` until the remote's first status push.
