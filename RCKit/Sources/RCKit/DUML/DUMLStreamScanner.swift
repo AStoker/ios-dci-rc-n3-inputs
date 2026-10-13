@@ -2,16 +2,18 @@
 ///
 /// A stream (unlike a WebSocket) has no message boundaries: one read can hold half a frame or
 /// three frames. The scanner buffers bytes and emits complete items, resyncing on anything that
-/// doesn't validate. It accepts both bare DUML and DUML inside envelopes, because we don't yet know
-/// which one the RC-N3 sends.
+/// doesn't validate. It accepts both bare DUML and DUML inside envelopes. (The RC-N3 sends
+/// enveloped DUML, one envelope per USB transfer, zero-padded to 512 bytes.)
 public struct DUMLStreamScanner: Sendable {
     public enum Item: Sendable, Equatable {
         /// A DUML frame with valid CRCs. `envelopePort` is set when it arrived inside a `55 CC` envelope.
         case duml(DUMLFrame, raw: [UInt8], envelopePort: UInt16?)
         /// An envelope whose payload isn't DUML (e.g. video). Only the first bytes are kept.
         case envelope(port: UInt16, length: Int, head: [UInt8])
-        /// Bytes that matched neither format.
+        /// Non-zero bytes that matched neither format.
         case skipped(Int)
+        /// Zero bytes between items (USB transfer padding).
+        case padding(Int)
     }
 
     private var buffer: [UInt8] = []
@@ -31,17 +33,24 @@ public struct DUMLStreamScanner: Sendable {
         buffer.append(contentsOf: bytes)
         var items: [Item] = []
         var skipped = 0
+        var padding = 0
         func flushSkipped() {
+            if padding > 0 { items.append(.padding(padding)); padding = 0 }
             if skipped > 0 { items.append(.skipped(skipped)); skipped = 0 }
+        }
+        func skip(_ range: Range<Int>) {
+            let zeros = buffer[range].reduce(0) { $1 == 0 ? $0 + 1 : $0 }
+            padding += zeros
+            skipped += range.count - zeros
         }
 
         scan: while start < buffer.count {
             if buffer[start] != DUMLFrame.magic {
                 if let next = buffer[start...].firstIndex(of: DUMLFrame.magic) {
-                    skipped += next - start
+                    skip(start..<next)
                     start = next
                 } else {
-                    skipped += buffer.count - start
+                    skip(start..<buffer.count)
                     start = buffer.count
                     break scan
                 }

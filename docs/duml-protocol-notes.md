@@ -1,6 +1,8 @@
-# DUML protocol notes (extracted from source, not yet seen on an RC-N3)
+# DUML protocol notes (extracted from source)
 
-What the open-source tools actually do, read from their source on 2026-10-12. Everything here is **HYPOTHESIS for the RC-N3** until it shows up in a probe log. The CRC routines are the exception: they're checked byte-for-byte against published packets (see "Verification").
+What the open-source tools actually do, read from their source on 2026-10-12.
+
+> **RC-N3 update (hardware test 1, 2026-10-12):** the RC-N3 uses `com.dji.logiclink` with `55 CC` envelopes on port 22345 both ways, and only answers requests sent as App (0x02) inside an envelope. It pushes 06/05 (sticks + buttons) on its own at ~9 Hz. The 06/01 reply comes from HDLINK-GND in the RC-N1 layout below. CRCs, framing and the 06/01 layout are CONFIRMED. Details and evidence are in `findings.md`.
 
 ## Sources read
 

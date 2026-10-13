@@ -29,12 +29,22 @@ final class ProbeModel {
     private(set) var logFileSize = 0
     private(set) var now = ProbeClock.now()
 
-    // DUML experiment controls
-    var sender: UInt8 = DUMLDevice.pc
-    var framing: DUMLOutboundFraming = .raw
+    // DUML experiment controls. Defaults are what the RC-N3 answered in the first hardware test
+    // (55 CC envelope, sent as App). Raw/PC got no replies.
+    var sender: UInt8 = DUMLDevice.app { didSet { restartPollingIfNeeded() } }
+    var framing: DUMLOutboundFraming = .logicLink { didSet { restartPollingIfNeeded() } }
     /// nil = every open session.
-    var targetSessionID: String?
-    var pollHz: Double = 20
+    var targetSessionID: String? { didSet { restartPollingIfNeeded() } }
+    enum PollMode: String, CaseIterable, Identifiable {
+        case fixedRate = "Fixed rate"
+        case replyDriven = "As fast as replies"
+        var id: String { rawValue }
+    }
+    var pollMode: PollMode = .fixedRate { didSet { restartPollingIfNeeded() } }
+    /// Test 2: the remote refreshes sticks at ~50-60 Hz; 100 Hz polling catches every new value
+    /// with ~99% replies, while 200 Hz halves the 06/05 push rate for no gain.
+    static let pollRates: [Double] = [25, 50, 100, 200]
+    var pollHz: Double = 100 { didSet { restartPollingIfNeeded() } }
     var pollEnabled = false {
         didSet { if pollEnabled != oldValue { pollChanged() } }
     }
@@ -52,7 +62,6 @@ final class ProbeModel {
     var markerStep = 1
 
     private var sequence = DUMLSequence()
-    private var pollTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
     private var tickCount = 0
     private var lastShownLineID = -1
@@ -99,6 +108,10 @@ final class ProbeModel {
         now = ProbeClock.now()
         accessories = ea.accessories
         sessions = ea.allSessions.map { $0.snapshot() }
+        // A session that (re)opened while polling is on starts polling too.
+        if pollEnabled {
+            for session in targetSessions where session.snapshot().poll == nil { session.startPolling(pollConfig) }
+        }
         gc.poll()
         devices = gc.devices
 
@@ -231,8 +244,17 @@ final class ProbeModel {
         for session in targets {
             let frame = request.frame(sender: sender, sequence: sequence.next())
             session.send(framing.wrap(frame.encoded()),
-                         note: "\(request.shortName) [\(framing.label), from \(DUMLDevice.name(sender))]")
+                         note: "\(request.shortName) [\(framing.label), from \(DUMLDevice.name(sender))]",
+                         frame: frame)
         }
+    }
+
+    /// Latest reply stats for a request on the first targeted session that has sent it.
+    func replyStats(for request: Request) -> StreamAnalyzer.ReplyStats? {
+        let frame = request.frame(sender: sender, sequence: 0)
+        let key = UInt16(frame.commandSet) << 8 | UInt16(frame.commandID)
+        let candidates = sessions.filter { targetSessionID == nil || $0.id == targetSessionID }
+        return candidates.compactMap { $0.analyzer.replyStats[key] }.first { $0.sent > 0 }
     }
 
     /// Builds a DUML frame from hex fields and sends it. Returns an error message, or nil on success.
@@ -249,7 +271,7 @@ final class ProbeModel {
         for session in targets {
             let frame = DUMLFrame(sender: sender, receiver: rx[0], sequence: sequence.next(),
                                   commandType: type[0], commandSet: set[0], commandID: id[0], payload: body)
-            session.send(framing.wrap(frame.encoded()), note: "custom \(frame.label) [\(framing.label)]")
+            session.send(framing.wrap(frame.encoded()), note: "custom \(frame.label) [\(framing.label)]", frame: frame)
         }
         return nil
     }
@@ -262,19 +284,29 @@ final class ProbeModel {
         return nil
     }
 
+    private var pollConfig: AccessoryStreamSession.PollConfig {
+        AccessoryStreamSession.PollConfig(
+            mode: pollMode == .replyDriven ? .replyDriven : .fixedRate(pollHz),
+            framing: framing, sender: sender)
+    }
+
+    /// Polling runs on the I/O thread inside each session; the model just starts and stops it.
     private func pollChanged() {
-        pollTask?.cancel()
-        guard pollEnabled else {
-            log.log(.duml, "Stick polling stopped")
-            return
-        }
-        log.log(.duml, "Stick polling started at \(Int(pollHz)) Hz (\(framing.label), from \(DUMLDevice.name(sender)))")
-        pollTask = Task { [weak self] in
-            while !Task.isCancelled, let self, self.pollEnabled {
-                self.send(.sticks)
-                try? await Task.sleep(for: .seconds(1 / max(1, self.pollHz)))
-            }
-        }
+        for session in ea.liveSessions { session.stopPolling() }
+        guard pollEnabled else { return }
+        let targets = targetSessions
+        if targets.isEmpty { log.log(.duml, "Polling not started: no open EA session") }
+        for session in targets { session.startPolling(pollConfig) }
+    }
+
+    private func restartPollingIfNeeded() {
+        if pollEnabled { pollChanged() }
+    }
+
+    /// Poll stats (06/01) for the first targeted session that is polling.
+    var pollStats: (stats: StreamAnalyzer.ReplyStats?, timeouts: Int)? {
+        guard let session = sessions.first(where: { $0.poll != nil }) else { return nil }
+        return (session.analyzer.replyStats[0x0601], session.pollTimeouts)
     }
 
     // MARK: Sweep
@@ -390,6 +422,16 @@ final class ProbeModel {
             out.append("  " + a.statsLine())
             if let last = a.lastInTime { out.append("  last packet \(Format.age(now - last)) ago") }
             if let version = a.versionInfo { out.append("  VERSION \(version)") }
+            if let poll = s.poll { out.append("  polling \(poll.mode) \(poll.framing.label) from \(DUMLDevice.name(poll.sender)); timeouts \(s.pollTimeouts)") }
+            for stats in a.replyStats.values.sorted(by: { $0.label < $1.label }) {
+                out.append("  replies \(stats.label): \(stats.replies)/\(stats.sent) sent, \(Format.rate(stats.replyRate)), "
+                    + "last status \(stats.lastStatus.map(Hex.byte) ?? "-"), "
+                    + "latency avg \(stats.averageLatency.map(Format.ms) ?? "-") p95 \(stats.p95Latency.map(Format.ms) ?? "-")")
+            }
+            if let battery = a.latestBattery?.info { out.append("  battery (06/1e): \(battery.percent)% remaining \(battery.remaining)") }
+            if let median = a.medianChannelChangeInterval {
+                out.append("  06/01 fresh values \(Format.rate(a.freshChannelRate)), median change interval \(Format.ms(median))")
+            }
             for port in a.ports.values.sorted(by: { $0.port < $1.port }) {
                 out.append("  55CC \(LogicLink.Port.name(port.port)): \(port.packets) pkts, \(port.bytes) B, head \(Hex.string(port.lastHead))")
             }
@@ -406,7 +448,8 @@ final class ProbeModel {
             }
             if let push = a.latestPush?.params {
                 out.append("  06/05 decode: ail \(push.aileron) ele \(push.elevator) thr \(push.throttle) rud \(push.rudder) "
-                    + "gimbal \(push.gimbal) wheel \(Hex.byte(push.wheelInfo)) btnA \(Hex.byte(push.buttonsA)) btnB \(Hex.byte(push.buttonsB))")
+                    + "gimbal \(push.gimbal) wheel \(Hex.byte(push.wheelInfo)) btnA \(Hex.byte(push.buttonsA)) btnB \(Hex.byte(push.buttonsB)) "
+                    + "mode \(push.flightMode.rawValue) RTH \(push.goHomePressed) shutter \(push.shutter) photo/video \(push.photoVideo) B10 \(push.custom1)")
             }
             for (length, diff) in a.rawDiffs.sorted(by: { $0.key < $1.key }) where diff.packetCount > 1 {
                 out.append("  raw chunks len \(length): ×\(diff.packetCount), changed bytes \(diff.changedPositions.map(String.init).joined(separator: ","))")
@@ -448,6 +491,10 @@ enum Format {
 
     static func byteRate(_ value: Double) -> String {
         bytes(Int(value)) + "/s"
+    }
+
+    static func ms(_ seconds: Double) -> String {
+        String(format: "%.1f ms", seconds * 1000)
     }
 
     static func age(_ seconds: Double) -> String {

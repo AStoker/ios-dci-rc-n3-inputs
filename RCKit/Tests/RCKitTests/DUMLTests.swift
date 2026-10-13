@@ -108,7 +108,7 @@ enum Fixtures {
             for item in scanner.append([byte]) {
                 switch item {
                 case .duml: frames += 1
-                case let .skipped(n): skipped += n
+                case let .skipped(n), let .padding(n): skipped += n
                 case .envelope: Issue.record("unexpected envelope")
                 }
             }
@@ -126,6 +126,18 @@ enum Fixtures {
             return nil
         }
         #expect(ports == [LogicLink.Port.duml, LogicLink.Port.duml])
+    }
+
+    @Test func countsZeroPaddingSeparately() {
+        // RC-N3: one envelope per 512-byte USB transfer, zero-padded.
+        var scanner = DUMLStreamScanner()
+        var transfer = Fixtures.gogglesCmd2
+        transfer += [UInt8](repeating: 0, count: 512 - transfer.count)
+        let items = scanner.append(transfer + transfer)
+        let padding = items.reduce(0) { if case let .padding(n) = $1 { $0 + n } else { $0 } }
+        let skipped = items.reduce(0) { if case let .skipped(n) = $1 { $0 + n } else { $0 } }
+        #expect(padding == 2 * (512 - Fixtures.gogglesCmd2.count))
+        #expect(skipped == 0)
     }
 
     @Test func reportsNonDUMLEnvelopes() {
@@ -190,6 +202,39 @@ enum Fixtures {
         #expect(!params.custom2 && !params.playback)
     }
 
+    @Test func rcN3PushFrameFromHardware() throws {
+        // Captured 2026-10-12 from Andy's RC-N3 (sticks centred, mode switch middle).
+        let transfer = Hex.parse("55 cc 49 57 1a 00 00 00 55 1a 04 b1 06 02 00 00 00 06 05 00 04 00 04 00 04 00 04 00 04 00 10 00 f6 03")!
+        var scanner = DUMLStreamScanner()
+        guard case let .duml(frame, _, port)? = scanner.append(transfer).first else {
+            Issue.record("no frame"); return
+        }
+        #expect(port == LogicLink.Port.duml)
+        #expect(frame.label == "06/05 req RC→APP")
+        let push = try #require(RCPushParams(payload: frame.payload))
+        #expect([push.aileron, push.elevator, push.throttle, push.rudder, push.gimbal] == [1024, 1024, 1024, 1024, 1024])
+        #expect(push.modeSwitch == 1)
+        #expect(push.flightMode == .normal)
+        #expect(RCFlightModeSwitch(raw: 2) == .cine && RCFlightModeSwitch(raw: 0) == .sport)
+        #expect(!push.goHomePressed && !push.photoVideo && !push.shutter)
+    }
+
+    @Test func rcN3ReplyPayloadsFromHardware() throws {
+        // Payloads of replies captured from the RC-N3 (requests sent as APP in a 55 CC envelope).
+        let sticks = try #require(RCChannelReport(payload: Hex.parse(
+            "00 00 00 04 00 00 04 00 00 04 00 00 04 00 00 04 00 00 04 00 00 04 00 00 04")!))
+        #expect(sticks.status == 0)
+        #expect(sticks.channels.count == 8)
+        #expect(sticks.channels.allSatisfy { $0.raw == 1024 && $0.tag == 0 })
+
+        let version = Hex.parse("00 01 72 63 31 35 31 00 00 00 c0 1f 00 00 00 00 00 00 0b 03 00 01 27 03 01 00 01 00 00 00")!
+        #expect(DUMLVersionResponse.hardwareVersion(payload: version) == "rc151")
+        #expect(DUMLVersionResponse.firmwareVersion(payload: version) == "00.01.03.39")
+
+        let battery = try #require(RCBatteryInfo(payload: Hex.parse("a6 09 00 00 5f 00")!))
+        #expect(battery.remaining == 2470 && battery.percent == 95)
+    }
+
     @Test func versionResponseStrings() {
         var payload: [UInt8] = [0, 0] + Array("RC-N3-TEST".utf8)
         payload += [UInt8](repeating: 0, count: 16 - 10)
@@ -229,6 +274,37 @@ enum Fixtures {
         #expect(analyzer.dumlFramesIn == 1)
         #expect(analyzer.latestChannels?.report.channels.first?.raw == 364)
         #expect(analyzer.responseCounts.values.reduce(0, +) == 1)
+    }
+
+    @Test func analyzerMatchesRepliesBySequence() {
+        // RC-N3 behaviour: a 06/01 request to RC is answered by HDLINK-GND (0x0e), same sequence number.
+        var analyzer = StreamAnalyzer(name: "test")
+        let request = DUMLCommands.rcChannelParamsGet(sender: DUMLDevice.app, sequence: 0x1234)
+        analyzer.recordOutgoing(LogicLink.wrap(request.encoded()), at: 10, note: "t", frame: request, log: nil)
+        let reply = DUMLFrame(sender: 0x0E, receiver: DUMLDevice.app, sequence: 0x1234, commandType: 0x80,
+                              commandSet: 0x06, commandID: 0x01, payload: [UInt8](repeating: 0, count: 25))
+        let frames = analyzer.ingestIncoming(LogicLink.wrap(reply.encoded()) + [UInt8](repeating: 0, count: 100),
+                                             at: 10.012, log: nil)
+        #expect(frames.count == 1)
+        let stats = analyzer.replyStats[0x0601]
+        #expect(stats?.sent == 1 && stats?.replies == 1 && stats?.lastStatus == 0)
+        #expect(abs((stats?.lastLatency ?? 0) - 0.012) < 1e-9)
+        #expect(analyzer.paddingBytes == 100)
+        #expect(analyzer.skippedBytes == 0)
+    }
+
+    @Test func analyzerMeasuresFreshStickValues() {
+        // Polled every 10 ms, but values change only every other reply (a 50 Hz source), like the RC-N3.
+        var analyzer = StreamAnalyzer(name: "test")
+        for i in 0..<30 {
+            let value = UInt16(1024 + (i / 2) * 20)
+            let payload: [UInt8] = [0] + (0..<8).flatMap { _ in [0, UInt8(value & 0xFF), UInt8(value >> 8)] }
+            let reply = DUMLFrame(sender: 0x0E, receiver: DUMLDevice.app, sequence: UInt16(i), commandType: 0x80,
+                                  commandSet: 0x06, commandID: 0x01, payload: payload)
+            analyzer.ingestIncoming(LogicLink.wrap(reply.encoded()), at: 50 + Double(i) * 0.01, log: nil)
+        }
+        let median = try? #require(analyzer.medianChannelChangeInterval)
+        #expect(abs((median ?? 0) - 0.02) < 1e-6)
     }
 
     @Test func hexParsing() {

@@ -10,7 +10,8 @@ struct DUMLView: View {
     @State private var customSet = "06"
     @State private var customID = "01"
     @State private var customPayload = ""
-    @State private var rawHex = "55 0d 04 33 0a 06 eb 34 40 06 01 74 24"
+    // 06/01 from App, in a 55 CC envelope (the form the RC-N3 answered).
+    @State private var rawHex = "55 cc 49 57 0d 00 00 00 55 0d 04 33 02 06 f9 34 40 06 01 50 58"
     @State private var message: String?
 
     var body: some View {
@@ -36,15 +37,51 @@ struct DUMLView: View {
                 } header: {
                     Text("Target")
                 } footer: {
-                    Text("The RC-N1 tools send as PC with raw DUML. DJI's iOS app sends as App, and newer devices wrap DUML in a 55 CC envelope. Which one the RC-N3 wants is what we're finding out.")
+                    Text("Defaults are what the RC-N3 answered: 55 CC envelope, sent as App. Raw DUML or PC got no replies in the first test.")
                 }
 
-                Section("Requests") {
+                Section {
                     ForEach(ProbeModel.Request.allCases) { request in
-                        Button(request.title) { model.send(request) }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Button(request.title) { model.send(request) }
+                            ReplyLine(stats: model.replyStats(for: request), now: model.now)
+                        }
                     }
+                } header: {
+                    Text("Requests")
+                } footer: {
+                    Text("Each button sends one request. The line under it shows the remote's reply (status 00 = OK) and round-trip time. 06/05 is pushed by the remote rather than requested, so it shows no reply.")
+                }
+
+                Section {
                     Toggle("Poll sticks (06/01)", isOn: $model.pollEnabled)
-                    Stepper("Poll rate: \(Int(model.pollHz)) Hz", value: $model.pollHz, in: 5...100, step: 5)
+                    Picker("Mode", selection: $model.pollMode) {
+                        ForEach(ProbeModel.PollMode.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    if model.pollMode == .fixedRate {
+                        Picker("Rate", selection: $model.pollHz) {
+                            ForEach(ProbeModel.pollRates, id: \.self) { Text("\(Int($0)) Hz").tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                    }
+                    if let poll = model.pollStats {
+                        let stats = poll.stats
+                        LabeledContent("Replies", value: stats.map { "\(Format.rate($0.replyRate)) · \($0.replies)/\($0.sent)" } ?? "none yet")
+                        LabeledContent("Latency avg / p95", value: "\(stats?.averageLatency.map(Format.ms) ?? "-") / \(stats?.p95Latency.map(Format.ms) ?? "-")")
+                        if model.pollMode == .replyDriven {
+                            LabeledContent("Timeouts (no reply in 250 ms)", value: "\(poll.timeouts)")
+                        }
+                        if let analyzer = model.sessions.first(where: { $0.poll != nil })?.analyzer {
+                            LabeledContent("Fresh values (move a stick)", value: Format.rate(analyzer.freshChannelRate))
+                            LabeledContent("Median time between new values",
+                                           value: analyzer.medianChannelChangeInterval.map(Format.ms) ?? "move a stick fast")
+                        }
+                    }
+                } header: {
+                    Text("Stick polling")
+                } footer: {
+                    Text("Runs on the I/O thread. \"As fast as replies\" sends the next request the moment a reply arrives, which shows the most the remote can sustain.")
                 }
 
                 Section {
@@ -165,7 +202,8 @@ private struct DecodedSection: View {
             }
             if let latest = session.analyzer.latestPush {
                 let p = latest.params
-                Text("06/05 push, \(Format.age(now - latest.time)) ago").font(.caption).foregroundStyle(.secondary)
+                let pushRate = session.analyzer.frameTypes.values.first { $0.commandSet == 0x06 && $0.commandID == 0x05 }?.rate ?? 0
+                Text("06/05 push · \(Format.rate(pushRate)) · \(Format.age(now - latest.time)) ago").font(.caption).foregroundStyle(.secondary)
                 HStack {
                     Spacer()
                     StickView(title: "Left (rudder, throttle)", x: RCStickRange.normalized(p.rudder), y: RCStickRange.normalized(p.throttle))
@@ -175,14 +213,19 @@ private struct DecodedSection: View {
                 }
                 Group {
                     LabeledContent("Raw A/E/T/R", value: "\(p.aileron) / \(p.elevator) / \(p.throttle) / \(p.rudder)")
-                    LabeledContent("Gimbal", value: "\(p.gimbal)")
-                    LabeledContent("Wheel", value: "0x\(Hex.byte(p.wheelInfo)) click \(p.wheelClick) offset \(p.wheelOffset) neg \(p.wheelNegative)")
-                    LabeledContent("Mode switch", value: "\(p.modeSwitch)")
-                    LabeledContent("Buttons", value: [p.goHomePressed ? "RTH" : nil, p.custom1 ? "C1" : nil, p.custom2 ? "C2" : nil,
-                                                      p.shutter ? "shutter" : nil, p.record ? "record" : nil, p.playback ? "playback" : nil]
-                        .compactMap { $0 }.joined(separator: " ").ifEmpty("none"))
+                    LabeledContent("Gimbal dial", value: "\(p.gimbal)  \(String(format: "%+.2f", RCStickRange.normalized(p.gimbal)))")
+                    LabeledContent("Flight mode switch", value: "\(p.flightMode.rawValue) (raw \(p.modeSwitch))")
+                    ButtonRow(name: "Pause/RTH", isOn: p.goHomePressed)
+                    ButtonRow(name: "Shutter/Record", isOn: p.shutter)
+                    ButtonRow(name: "Photo/Video", isOn: p.photoVideo)
+                    ButtonRow(name: "B 0x10 (unknown, seen once in test 1)", isOn: p.custom1)
+                    LabeledContent("Flag bytes", value: "A \(bits(p.buttonsA))  B \(bits(p.buttonsB))  wheel \(Hex.byte(p.wheelInfo))")
                 }
                 .font(.caption.monospaced())
+            }
+            if let battery = session.analyzer.latestBattery?.info {
+                LabeledContent("Remote battery (06/1e)", value: "\(battery.percent)%")
+                    .font(.caption.monospaced())
             }
         } header: {
             Text("Decoded · \(session.protocolString)")
@@ -223,6 +266,42 @@ struct StickView: View {
     }
 }
 
-private extension String {
-    func ifEmpty(_ fallback: String) -> String { isEmpty ? fallback : self }
+private func bits(_ value: UInt8) -> String {
+    let binary = String(value, radix: 2)
+    return String(repeating: "0", count: 8 - binary.count) + binary
+}
+
+private struct ButtonRow: View {
+    let name: String
+    let isOn: Bool
+
+    var body: some View {
+        HStack {
+            Text(name)
+            Spacer()
+            Text(isOn ? "PRESSED" : "—")
+                .bold(isOn)
+                .foregroundStyle(isOn ? .orange : .secondary)
+        }
+    }
+}
+
+private struct ReplyLine: View {
+    let stats: StreamAnalyzer.ReplyStats?
+    let now: Double
+
+    var body: some View {
+        Group {
+            if let stats, let time = stats.lastReplyTime {
+                Text("reply status \(stats.lastStatus.map(Hex.byte) ?? "-") · \(stats.lastLatency.map(Format.ms) ?? "-") · "
+                    + "\(Format.age(now - time)) ago · \(stats.replies)/\(stats.sent)")
+                    .foregroundStyle(.green)
+            } else if let stats {
+                Text("sent \(stats.sent)×, no reply").foregroundStyle(.secondary)
+            } else {
+                Text("not sent yet").foregroundStyle(.tertiary)
+            }
+        }
+        .font(.caption2.monospaced())
+    }
 }

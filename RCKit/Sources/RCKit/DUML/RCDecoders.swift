@@ -59,7 +59,11 @@ public struct RCChannelReport: Sendable, Equatable {
 }
 
 /// 06/05 "RC Parameter Push" layout, per the o-gs dissector (`rc_push_param_dissector`).
-/// The dissector was written for Phantom/Mavic-era remotes.
+///
+/// RC-N3 (hardware tests 1-2, 2026-10-12): pushed unprompted, RC→APP, cmd type 0x00, seq 0000,
+/// ~9 Hz idle (fewer while 06/01 is polled fast), 13-byte payload. All five analog fields span
+/// 364…1684. Bits: buttonsA 0x08 Pause/RTH, 0x30 mode switch (C=2, N=1, S=0); buttonsB 0x40
+/// Shutter/Record, 0x01 Photo/Video. The Customizable button isn't reported. The wheel byte stays 0.
 public struct RCPushParams: Sendable, Equatable {
     public var aileron: UInt16
     public var elevator: UInt16
@@ -91,12 +95,49 @@ public struct RCPushParams: Sendable, Equatable {
     public var wheelChanged: Bool { wheelInfo & 0x80 != 0 }
     public var goHomePressed: Bool { buttonsA & 0x08 != 0 }
     public var modeSwitch: UInt8 { (buttonsA & 0x30) >> 4 }
+    /// RC-N3 mapping, confirmed in hardware test 2.
+    public var flightMode: RCFlightModeSwitch { RCFlightModeSwitch(raw: modeSwitch) }
     public var footStool: UInt8 { (buttonsA & 0xC0) >> 6 }
     public var custom2: Bool { buttonsB & 0x08 != 0 }
     public var custom1: Bool { buttonsB & 0x10 != 0 }
     public var playback: Bool { buttonsB & 0x20 != 0 }
     public var shutter: Bool { buttonsB & 0x40 != 0 }
     public var record: Bool { buttonsB & 0x80 != 0 }
+    /// Not in the dissector. RC-N3 Photo/Video button (confirmed in hardware test 2).
+    public var photoVideo: Bool { buttonsB & 0x01 != 0 }
+}
+
+/// The RC-N3 flight mode switch (manual §4.5).
+public enum RCFlightModeSwitch: String, Sendable, Equatable, Codable {
+    case cine = "C"
+    case normal = "N"
+    case sport = "S"
+    case unknown = "?"
+
+    /// From the 2-bit field in 06/05 buttonsA bits 4-5.
+    public init(raw: UInt8) {
+        switch raw {
+        case 2: self = .cine
+        case 1: self = .normal
+        case 0: self = .sport
+        default: self = .unknown
+        }
+    }
+}
+
+/// 06/1E "RC Battery Info Push" (RC→APP, ~0.8 Hz on the RC-N3).
+///
+/// Observed payloads like `a6 09 00 00 5f 00`: LE32 2470, then 95. The RC-N3 battery is 2600 mAh,
+/// so the first field looks like remaining mAh and payload[4] like percent. HYPOTHESIS.
+public struct RCBatteryInfo: Sendable, Equatable {
+    public var remaining: UInt32
+    public var percent: UInt8
+
+    public init?(payload: [UInt8]) {
+        guard payload.count >= 5 else { return nil }
+        remaining = UInt32(payload[0]) | UInt32(payload[1]) << 8 | UInt32(payload[2]) << 16 | UInt32(payload[3]) << 24
+        percent = payload[4]
+    }
 }
 
 /// Response to 00/01 Version Inquiry: payload[2..<18] is an ASCII hardware version (o-gs dissector).

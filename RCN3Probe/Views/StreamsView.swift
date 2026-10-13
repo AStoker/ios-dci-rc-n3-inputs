@@ -73,6 +73,7 @@ struct SessionDetailView: View {
                         LabeledContent("Waiting to write", value: Format.bytes(session.pendingWriteBytes))
                     }
                     LabeledContent("DUML frames", value: "\(a.dumlFramesIn) · \(Format.rate(a.dumlRate))")
+                    LabeledContent("Zero padding", value: Format.bytes(a.paddingBytes))
                     LabeledContent("Unparsed bytes", value: Format.bytes(a.skippedBytes))
                     if let version = a.versionInfo { LabeledContent("Version reply", value: version) }
                 }
