@@ -18,6 +18,39 @@ final class ProbeModel {
     let environment: ProbeEnvironment
     let ea: ExternalAccessoryProbe
     let gc: GameControllerProbe
+    /// The clean input API (RCKit). The simulator will use exactly this.
+    let remote: RCN3Remote
+    /// Feeds the remote's raw traffic into the probe's analyzer and log.
+    let remoteTap: RemoteDiagnosticsTap
+
+    /// iOS allows one EA session per protocol, so the clean API and the raw probe take turns.
+    enum Engine: String, CaseIterable, Identifiable {
+        case inputAPI = "Input API"
+        case rawProbe = "Raw probe"
+        var id: String { rawValue }
+    }
+    var engine: Engine = .inputAPI {
+        didSet { if engine != oldValue { applyEngine() } }
+    }
+
+    // Input API state, refreshed by `tick()`
+    private(set) var inputState: RCConnectionState = .stopped
+    private(set) var remoteStats = RCN3Remote.Stats()
+    var stickMode: RCStickMode = .mode2
+    private(set) var recorder: RCRecorder?
+    private(set) var recordingSampleCount = 0
+    private(set) var recordingDuration: Double = 0
+    private(set) var recordings: [RecordingFile] = []
+    private(set) var replay: RCReplaySource?
+    private(set) var replayingURL: URL?
+
+    struct RecordingFile: Identifiable, Hashable {
+        let url: URL
+        let size: Int
+        let date: Date
+        var id: URL { url }
+        var name: String { url.deletingPathExtension().lastPathComponent }
+    }
 
     // Snapshots, refreshed by `tick()`
     private(set) var accessories: [AccessoryInfo] = []
@@ -51,6 +84,7 @@ final class ProbeModel {
     }
     var autoOpenSessions = true {
         didSet {
+            guard engine == .rawProbe else { return }
             ea.autoOpenSessions = autoOpenSessions
             if autoOpenSessions { ea.refresh() }
         }
@@ -76,6 +110,9 @@ final class ProbeModel {
         self.log = log
         ea = ExternalAccessoryProbe(log: log, declaredProtocols: environment.declaredAccessoryProtocols)
         gc = GameControllerProbe(log: log)
+        let tap = RemoteDiagnosticsTap(log: log)
+        remoteTap = tap
+        remote = RCN3Remote(diagnostics: { tap.handle($0) })
         logFileURL = log.startNewFile(header: Self.logHeader(environment))
     }
 
@@ -95,8 +132,16 @@ final class ProbeModel {
         interfaces = NetworkInterfaces.snapshot()
         launchInterfaceIDs = Set(interfaces.map(\.id))
         log.log(.net, "Network interfaces at launch: " + interfaces.map(\.logDescription).joined(separator: "; "))
+        ea.autoOpenSessions = engine == .rawProbe && autoOpenSessions
         ea.start()
         gc.start()
+        refreshRecordings()
+        applyEngine()
+        // `-replay <recording name>` starts a replay at launch (demo mode without the remote).
+        if let name = UserDefaults.standard.string(forKey: "replay"),
+           let file = recordings.first(where: { $0.name == name }) {
+            startReplay(file)
+        }
         refreshTask = Task { [weak self] in
             while !Task.isCancelled {
                 self?.tick()
@@ -109,6 +154,13 @@ final class ProbeModel {
         now = ProbeClock.now()
         accessories = ea.accessories
         sessions = ea.allSessions.map { $0.snapshot() }
+        if engine == .inputAPI { sessions.append(remoteTap.snapshot()) }
+        inputState = activeSource.connectionState
+        remoteStats = remote.stats
+        if let recorder {
+            recordingSampleCount = recorder.sampleCount
+            recordingDuration = recorder.duration
+        }
         // A session that (re)opened while polling is on starts polling too.
         if pollEnabled {
             for session in targetSessions where session.snapshot().poll == nil { session.startPolling(pollConfig) }
@@ -158,10 +210,108 @@ final class ProbeModel {
         case .active:
             log.log(.app, "App → active")
             ea.refresh()
+            if engine == .inputAPI { remote.refresh() }
             gc.poll(logDevices: true)
         @unknown default:
             break
         }
+    }
+
+    // MARK: Engine & input API
+
+    private func applyEngine() {
+        switch engine {
+        case .inputAPI:
+            pollEnabled = false
+            ea.autoOpenSessions = false
+            ea.closeAll(reason: "engine switched to Input API", wait: true)
+            log.log(.app, "Engine: Input API (RCN3Remote, 06/01 at \(Int(remote.configuration.pollRate)) Hz)")
+            remote.start()
+        case .rawProbe:
+            stopReplay()
+            stopRecording()
+            remote.stop()
+            log.log(.app, "Engine: raw probe")
+            ea.autoOpenSessions = autoOpenSessions
+            ea.refresh()
+        }
+    }
+
+    /// What the Input tab shows: a replay if one is running, otherwise the live remote.
+    var activeSource: any RCInputSource {
+        if let replay { return replay }
+        return remote
+    }
+
+    /// Latest sample, read directly (not observed) so the Input tab can redraw at display rate.
+    func currentSample() -> RCInputSample? { activeSource.latest }
+
+    private var recordingsDirectory: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Recordings")
+    }
+
+    /// Recording captures the live remote, so it needs the Input API engine streaming (and no replay).
+    var canRecord: Bool {
+        engine == .inputAPI && replay == nil && inputState.isStreaming
+    }
+
+    func startRecording() {
+        guard recorder == nil, canRecord else { return }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        let url = recordingsDirectory.appendingPathComponent("rc-n3-\(formatter.string(from: Date())).jsonl")
+        do {
+            let header = RCRecordingHeader(accessory: remote.connectionState.accessory,
+                                           note: "RC-N3 Probe \(environment.appVersion), \(environment.deviceModel)")
+            let recorder = try RCRecorder(url: url, header: header)
+            recorder.record(from: remote)
+            self.recorder = recorder
+            recordingSampleCount = 0
+            recordingDuration = 0
+            log.log(.app, "Recording samples to \(url.lastPathComponent)")
+        } catch {
+            log.log(.app, "Couldn't start recording: \(error.localizedDescription)")
+        }
+    }
+
+    func stopRecording() {
+        guard let recorder else { return }
+        recorder.stop()
+        log.log(.app, "Recording stopped: \(recorder.sampleCount) samples, \(String(format: "%.1f", recorder.duration)) s")
+        self.recorder = nil
+        refreshRecordings()
+    }
+
+    func refreshRecordings() {
+        let keys: [URLResourceKey] = [.fileSizeKey, .contentModificationDateKey]
+        let urls = (try? FileManager.default.contentsOfDirectory(at: recordingsDirectory, includingPropertiesForKeys: keys)) ?? []
+        recordings = urls.filter { $0.pathExtension == "jsonl" }.compactMap { url in
+            let values = try? url.resourceValues(forKeys: Set(keys))
+            return RecordingFile(url: url, size: values?.fileSize ?? 0, date: values?.contentModificationDate ?? .distantPast)
+        }
+        .sorted { $0.date > $1.date }
+    }
+
+    func startReplay(_ file: RecordingFile) {
+        stopReplay()
+        do {
+            let replay = try RCReplaySource(url: file.url, loops: true)
+            self.replay = replay
+            replayingURL = file.url
+            replay.start()
+            log.log(.app, "Replaying \(file.name): \(replay.recording.samples.count) samples, \(String(format: "%.1f", replay.recording.duration)) s, looping")
+        } catch {
+            log.log(.app, "Couldn't load \(file.name): \(error)")
+        }
+    }
+
+    func stopReplay() {
+        guard let replay else { return }
+        replay.stop()
+        self.replay = nil
+        replayingURL = nil
+        log.log(.app, "Replay stopped")
     }
 
     // MARK: Sessions
@@ -234,6 +384,12 @@ final class ProbeModel {
     }
 
     func send(_ request: Request) {
+        if engine == .inputAPI {
+            let frame = request.frame(sender: sender, sequence: sequence.next())
+            remote.sendDiagnostic(framing.wrap(frame.encoded()),
+                                  note: "\(request.shortName) [\(framing.label), from \(DUMLDevice.name(sender))]", frame: frame)
+            return
+        }
         send(request, sender: sender, framing: framing, to: targetSessions)
     }
 
@@ -267,6 +423,12 @@ final class ProbeModel {
         else { return "Receiver, type, set and id must each be one hex byte" }
         guard let body = Hex.parse(payload) else { return "Payload isn't valid hex" }
         guard DUMLFrame.minimumLength + body.count <= DUMLFrame.maximumLength else { return "Payload too long" }
+        if engine == .inputAPI {
+            let frame = DUMLFrame(sender: sender, receiver: rx[0], sequence: sequence.next(),
+                                  commandType: type[0], commandSet: set[0], commandID: id[0], payload: body)
+            remote.sendDiagnostic(framing.wrap(frame.encoded()), note: "custom \(frame.label) [\(framing.label)]", frame: frame)
+            return nil
+        }
         let targets = targetSessions
         guard !targets.isEmpty else { return "No open EA session" }
         for session in targets {
@@ -279,6 +441,10 @@ final class ProbeModel {
 
     func sendRawHex(_ text: String) -> String? {
         guard let bytes = Hex.parse(text), !bytes.isEmpty else { return "Not valid hex" }
+        if engine == .inputAPI {
+            remote.sendDiagnostic(bytes, note: "raw hex (as typed)")
+            return nil
+        }
         let targets = targetSessions
         guard !targets.isEmpty else { return "No open EA session" }
         for session in targets { session.send(bytes, note: "raw hex (as typed)") }
@@ -294,7 +460,7 @@ final class ProbeModel {
     /// Polling runs on the I/O thread inside each session; the model just starts and stops it.
     private func pollChanged() {
         for session in ea.liveSessions { session.stopPolling() }
-        guard pollEnabled else { return }
+        guard pollEnabled, engine == .rawProbe else { return }
         let targets = targetSessions
         if targets.isEmpty { log.log(.duml, "Polling not started: no open EA session") }
         for session in targets { session.startPolling(pollConfig) }
@@ -335,7 +501,7 @@ final class ProbeModel {
 
     /// Tries every framing × sender combination on every open session and records what comes back.
     func runSweep() async {
-        guard !sweepRunning else { return }
+        guard !sweepRunning, engine == .rawProbe else { return }
         let sessions = ea.liveSessions
         guard !sessions.isEmpty else {
             log.log(.duml, "Sweep not run: no open EA session")
@@ -410,6 +576,18 @@ final class ProbeModel {
         out.append("=== RC-N3 Probe report \(Date().formatted(.iso8601)) ===")
         out.append(environment.summary)
         out.append("Log file: \(logFileURL?.lastPathComponent ?? "(none)")")
+
+        out.append("\n--- Input API (engine: \(engine.rawValue))")
+        out.append("state: \(inputState.label)")
+        out.append("samples \(Format.rate(remoteStats.sampleRate)), poll replies \(Format.rate(remoteStats.pollReplyRate)), "
+            + "push \(Format.rate(remoteStats.pushRate)), latency \(remoteStats.averageLatency.map(Format.ms) ?? "-"), "
+            + "frames \(remoteStats.framesReceived), remote \(remoteStats.remoteVersion ?? "?")")
+        if let sample = currentSample() {
+            out.append("latest: L(\(String(format: "%+.3f, %+.3f", sample.leftStick.x, sample.leftStick.y))) "
+                + "R(\(String(format: "%+.3f, %+.3f", sample.rightStick.x, sample.rightStick.y))) "
+                + "gimbal \(String(format: "%+.3f", sample.gimbalDial)) mode \(sample.flightMode.rawValue) "
+                + "buttons \(sample.buttons.rawValue) source \(sample.source.rawValue) raw \(sample.raw)")
+        }
 
         out.append("\n--- External Accessories (\(accessories.count))")
         if accessories.isEmpty { out.append("(none visible to this app)") }

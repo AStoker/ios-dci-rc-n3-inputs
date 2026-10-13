@@ -20,6 +20,10 @@ struct DUMLView: View {
         NavigationStack {
             Form {
                 Section {
+                    if model.engine == .inputAPI {
+                        Text("Engine: Input API. Requests go through RCN3Remote.sendDiagnostic.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     Picker("Session", selection: $model.targetSessionID) {
                         Text("All open sessions").tag(String?.none)
                         ForEach(model.sessions.filter { $0.state == .open }) { session in
@@ -55,6 +59,10 @@ struct DUMLView: View {
                 }
 
                 Section {
+                    if model.engine == .inputAPI {
+                        Text("The Input API polls 06/01 at \(Int(model.remote.configuration.pollRate)) Hz by itself (rates on the Input tab). Switch the engine to Raw probe for poll experiments.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else {
                     Toggle("Poll sticks (06/01)", isOn: $model.pollEnabled)
                     Picker("Mode", selection: $model.pollMode) {
                         ForEach(ProbeModel.PollMode.allCases) { Text($0.rawValue).tag($0) }
@@ -79,6 +87,7 @@ struct DUMLView: View {
                                            value: analyzer.medianChannelChangeInterval.map(Format.ms) ?? "move a stick fast")
                         }
                     }
+                    }
                 } header: {
                     Text("Stick polling")
                 } footer: {
@@ -94,7 +103,7 @@ struct DUMLView: View {
                             if model.sweepRunning { Spacer(); ProgressView() }
                         }
                     }
-                    .disabled(model.sweepRunning || model.liveSessionCount == 0)
+                    .disabled(model.sweepRunning || model.liveSessionCount == 0 || model.engine != .rawProbe)
                     if model.sweepRunning {
                         Text(model.sweepProgress).font(.caption.monospaced())
                     }
@@ -196,7 +205,7 @@ private struct DecodedSection: View {
                     HStack {
                         Text("ch\(index) · \(latest.report.label(for: index))").font(.caption)
                         Spacer()
-                        Text("tag \(Hex.byte(channel.tag))  \(channel.raw)  \(String(format: "%+.3f", channel.normalized))")
+                        Text(verbatim: "tag \(Hex.byte(channel.tag))  \(channel.raw)  \(String(format: "%+.3f", channel.normalized))")
                             .font(.caption.monospaced())
                     }
                 }

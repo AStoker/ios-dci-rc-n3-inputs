@@ -54,6 +54,8 @@ public final class RCN3Remote: RCInputSource, @unchecked Sendable {
         public var bytesReceived = 0
         /// From the 00/01 version reply, e.g. "rc151 fw 00.01.03.39".
         public var remoteVersion: String?
+
+        public init() {}
     }
 
     public let configuration: Configuration

@@ -138,6 +138,21 @@ func pollReply(_ channels: [UInt16], sequence: UInt16 = 1) -> DUMLFrame {
         #expect(abs(loaded.duration - 0.1) < 1e-9)
     }
 
+    /// Converted from hardware test 2 (tools/log2rec.py): real stick circles, mode switch and buttons.
+    @Test func loadsTheHardwareRecording() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/hw-test-2-demo.jsonl")
+        let recording = try RCRecording.load(from: url)
+        #expect(recording.samples.count == 539)
+        #expect(recording.samples.contains { $0.flightMode == .cine })
+        #expect(recording.samples.contains { $0.flightMode == .sport })
+        #expect(recording.samples.contains { $0.buttons.contains(.photoVideo) })
+        #expect(recording.samples.contains { $0.buttons.contains(.pauseRTH) })
+        #expect(recording.samples.contains { $0.leftStick.y == 1 })
+        // Normalised values agree with the raw values.
+        #expect(recording.samples.allSatisfy { abs($0.rightStick.x - RCStickRange.normalized($0.raw.rightX)) < 1e-9 })
+    }
+
     @Test func rejectsFilesThatArentRecordings() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("rckit-test-\(UUID().uuidString).jsonl")
         defer { try? FileManager.default.removeItem(at: url) }

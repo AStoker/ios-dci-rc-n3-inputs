@@ -18,7 +18,8 @@ let package = Package(
     targets: [
         .target(name: "RCKit"),
         .target(name: "RCKitProbe", dependencies: ["RCKit"]),
-        .testTarget(name: "RCKitTests", dependencies: ["RCKit"]),
+        // Fixtures/ holds recordings read by path in tests (not bundled resources).
+        .testTarget(name: "RCKitTests", dependencies: ["RCKit"], exclude: ["Fixtures"]),
         .testTarget(name: "RCKitProbeTests", dependencies: ["RCKitProbe"]),
     ]
 )

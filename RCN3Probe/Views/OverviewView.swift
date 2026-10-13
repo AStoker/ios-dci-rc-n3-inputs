@@ -28,7 +28,8 @@ struct OverviewView: View {
                 }
 
                 Section {
-                    Toggle("Auto-open sessions", isOn: $model.autoOpenSessions)
+                    Toggle("Auto-open sessions (raw probe engine)", isOn: $model.autoOpenSessions)
+                        .disabled(model.engine != .rawProbe)
                     if model.accessories.isEmpty {
                         Text("No External Accessory visible. iOS only lists accessories that speak a protocol this app declares.")
                             .foregroundStyle(.secondary)
