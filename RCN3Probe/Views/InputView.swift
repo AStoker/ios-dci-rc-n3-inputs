@@ -199,13 +199,13 @@ private struct PressCounts: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            ForEach(ProbeModel.buttonNames, id: \.name) { entry in
-                HStack {
-                    Text(entry.name).font(.caption)
+            ForEach(ProbeModel.pressCountNames, id: \.self) { name in
+                HStack(alignment: .firstTextBaseline) {
+                    Text(name).font(.caption)
                     Spacer()
-                    Text(verbatim: summary(entry.name))
+                    Text(verbatim: summary(name))
                         .font(.caption.monospacedDigit())
-                        .foregroundStyle(presses[entry.name] == nil ? .secondary : .primary)
+                        .foregroundStyle(presses[name] == nil ? .secondary : .primary)
                 }
             }
         }

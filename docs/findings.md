@@ -5,6 +5,7 @@ Tags: **CONFIRMED** = seen on Andy's hardware (iPhone 16 Pro Max + RC-N3), with 
 Logs (iPhone17,2, iOS 27.2 build 24B5099f, aircraft off):
 - **L1** = `rcn3-probe-2026-10-12_19-21-58.txt`: test 1, no step markers (actions matched by time).
 - **L2** = `rcn3-probe-2026-10-12_19-46-31.txt`: test 2, `docs/hardware-test-2.md` with step markers 1-17.
+- **L3** = `rcn3-probe-2026-10-13_15-53-08.txt`: Fn test (`docs/hardware-test-fn.md`) on the Input API engine, plus Andy's own button checks; every 06/05 change logged as a `BUTTONS` line.
 
 ## Summary
 
@@ -12,7 +13,7 @@ The RC-N3 is an External Accessory (`com.dji.logiclink`) speaking DUML inside `5
 - **06/01 poll** (we ask, ~10 ms round trip): both sticks and the gimbal dial. 100 Hz sustained, and the remote refreshes the values at ~50-60 Hz.
 - **06/05 push** (unprompted, ~7-9 Hz): sticks, gimbal, flight mode switch, Pause/RTH, Shutter/Record, Photo/Video.
 
-The Fn (Customizable) button probably reports only short taps, as a ~0.13 s pulse of 06/05 byte 12 bit 0x10 (HYPOTHESIS; see below).
+The Fn (Customizable) button reports gestures, not a held state: a single tap is a one-message pulse of 06/05 byte 12 bit 0x10, and a second gesture (double-click or long press) pulses bit 0x08.
 
 ## Transport
 
@@ -68,7 +69,10 @@ The Fn (Customizable) button probably reports only short taps, as a ~0.13 s puls
 | (RTH long press) | 00/f1 RC→APP payload `10 00 00 00` | appears during ~2 s holds | **CONFIRMED** association | L1; L2 269.0-274.6 s |
 | Shutter/Record button | 06/05 byte 12 bit 6 (0x40) | short and long press look the same | **CONFIRMED** | L1; L2 step 14 |
 | Photo/Video button | 06/05 byte 12 bit 0 (0x01) | held = 1 | **CONFIRMED** | L1; L2 step 15 |
-| Fn / Customizable button | 06/05 byte 12 bit 4 (0x10), the dissector's "custom1" | a one-message pulse (~0.13 s) on a short tap; nothing on a 1 s hold | HYPOTHESIS | L1 299.43 s: one push with B = 0x10. L2 step 13: two ~1 s holds, nothing in any frame (only the last few DUML lines per second were dropped, too few to hide a hold). Earlier "not reported" was too strong. |
+| Fn single tap | 06/05 byte 12 bit 4 (0x10), the dissector's "custom1" | set for exactly one push (~0.15 s) per tap | **CONFIRMED** | L3 15.8-24.1 s: 11 taps → 11 pulses; Andy saw the count rise on short taps only |
+| Fn other gesture | 06/05 byte 12 bit 3 (0x08), the dissector's "custom2" | one-push pulse per gesture | **CONFIRMED** bit; which gesture (double-click or long press) is a HYPOTHESIS | L3: two groups of three pulses, 63.9/65.3/66.5 s and 75.2/77.4/79.2 s; nothing else changed in any frame |
+| Fn double-click, long press | no 0x10 pulse | | **CONFIRMED** (Andy) | L3; one or both of them is the 0x08 pulse |
+| Fn + Photo/Video together | reports Photo/Video (0x01) only | | **CONFIRMED** (Andy) | L3 ~151-153 s |
 | Power button | not reported | | **CONFIRMED** | L1 |
 | 06/01 ch5-7 | constant 1024 | | **CONFIRMED** | L2 |
 
@@ -93,7 +97,7 @@ Manual §6: the remote sounds an idle alert and powers itself off if it's "not c
 
 ## Open questions
 
-1. Fn button: confirm the short-tap pulse (`hardware-test-fn.md`). If it doesn't show, is it reported elsewhere: only once DJI Fly assigns it a function, only with the aircraft on, or via a request (06/4c, 06/50, 06/2e)?
+1. Fn: which gesture pulses bit 0x08, double-click or long press (or both)? The Input tab counts it now. Are long-press or combos reported anywhere else?
 2. DJI Fly installed or running: does it take the session? (T8)
 3. Does the remote stay awake (no idle alert) while only our app is connected? (T9)
 4. If the stick mode is changed in DJI Fly, does the remote re-map its channels (06/19 "RC Control Mode Set" exists)? `RCStickMode` assumes the physical default (Mode 2).

@@ -313,7 +313,8 @@ public struct StreamAnalyzer: Sendable {
                 if let previous = latestPush?.params,
                    previous.buttonsA != params.buttonsA || previous.buttonsB != params.buttonsB {
                     log?.log(.duml, "\(name) BUTTONS A \(Self.bits(params.buttonsA)) B \(Self.bits(params.buttonsB)) "
-                        + "(mode \(params.flightMode.rawValue)\(params.goHomePressed ? " RTH" : "")\(params.custom1 ? " Fn?" : "")"
+                        + "(mode \(params.flightMode.rawValue)\(params.goHomePressed ? " RTH" : "")\(params.custom1 ? " Fn-tap" : "")"
+                        + "\(params.custom2 ? " Fn-0x08" : "")"
                         + "\(params.shutter ? " shutter" : "")\(params.photoVideo ? " photo/video" : ""))")
                 }
                 latestPush = (params, time)

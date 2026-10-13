@@ -49,6 +49,10 @@ final class ProbeModel {
     static let buttonNames: [(name: String, button: RCButtons)] = [
         ("Pause/RTH", .pauseRTH), ("Shutter", .shutterRecord), ("Photo/Video", .photoVideo), ("Fn", .customizable),
     ]
+    /// 06/05 byte 12 bit 0x08 (the dissector's "custom2"): pulses on another Fn gesture, double-click
+    /// or long press (unconfirmed). Counted from the raw flags until we know which.
+    static let fnSecondaryName = "Fn bit 0x08 (double-click or long press?)"
+    static var pressCountNames: [String] { buttonNames.map(\.name) + [fnSecondaryName] }
     private(set) var buttonPresses: [String: Int] = [:]
     private(set) var buttonLastPressed: [String: Double] = [:]
     private var buttonWatch: Task<Void, Never>?
@@ -331,20 +335,26 @@ final class ProbeModel {
         let stream = source.samples()
         buttonWatch = Task { [weak self] in
             var held: RCButtons = []
+            var secondaryHeld = false
             for await sample in stream {
                 let pressed = sample.buttons.subtracting(held)
                 held = sample.buttons
                 if !pressed.isEmpty { self?.notePresses(pressed, at: sample.time) }
+                let secondary = sample.raw.flagsB & 0x08 != 0
+                if secondary, !secondaryHeld { self?.notePress(Self.fnSecondaryName, at: sample.time) }
+                secondaryHeld = secondary
             }
         }
     }
 
     private func notePresses(_ pressed: RCButtons, at time: Double) {
-        for (name, button) in Self.buttonNames where pressed.contains(button) {
-            buttonPresses[name, default: 0] += 1
-            buttonLastPressed[name] = time
-            log.log(.app, "Button press: \(name) (#\(buttonPresses[name]!))")
-        }
+        for (name, button) in Self.buttonNames where pressed.contains(button) { notePress(name, at: time) }
+    }
+
+    private func notePress(_ name: String, at time: Double) {
+        buttonPresses[name, default: 0] += 1
+        buttonLastPressed[name] = time
+        log.log(.app, "Button press: \(name) (#\(buttonPresses[name]!))")
     }
 
     func resetButtonCounts() {
